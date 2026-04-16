@@ -29,3 +29,14 @@ define( 'ELODIN_SCHEMA', dirname( __FILE__ ) );
 
 // Define the version of the plugin
 define ( 'ELODIN_SCHEMA_VERSION', '0.1' );
+
+// Updater
+require 'vendor/plugin-update-checker/plugin-update-checker.php';
+$myUpdateChecker = Puc_v4_Factory::buildUpdateChecker(
+	'https://github.com/jonschr/elodin-schema',
+	__FILE__,
+	'elodin-schema'
+);
+
+// Optional: Set the branch that contains the stable release.
+$myUpdateChecker->setBranch('master');
