@@ -3,7 +3,7 @@
 	Plugin Name: Elodin Schema
 	Plugin URI: https://elod.in
 	Description: Manage reusable schema snippets and output them across the site.
-	Version: 0.1
+	Version: 0.2
 	Author: Jon Schroeder
 	Author URI: https://elod.in
 
@@ -24,7 +24,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'ELODIN_SCHEMA', dirname( __FILE__ ) );
 define( 'ELODIN_SCHEMA_URL', plugin_dir_url( __FILE__ ) );
-define( 'ELODIN_SCHEMA_VERSION', '0.1' );
+define( 'ELODIN_SCHEMA_VERSION', '0.2' );
 define( 'ELODIN_SCHEMA_POST_TYPE', 'elodin_schema' );
 
 define( 'ELODIN_SCHEMA_META_NOTES', '_elodin_schema_notes' );
