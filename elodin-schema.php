@@ -3,7 +3,7 @@
 	Plugin Name: Elodin Schema
 	Plugin URI: https://elod.in
 	Description: Manage reusable schema snippets and output them across the site.
-	Version: 0.2
+	Version: 0.3
 	Author: Jon Schroeder
 	Author URI: https://elod.in
 
@@ -24,7 +24,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'ELODIN_SCHEMA', dirname( __FILE__ ) );
 define( 'ELODIN_SCHEMA_URL', plugin_dir_url( __FILE__ ) );
-define( 'ELODIN_SCHEMA_VERSION', '0.2' );
+define( 'ELODIN_SCHEMA_VERSION', '0.3' );
 define( 'ELODIN_SCHEMA_POST_TYPE', 'elodin_schema' );
 
 define( 'ELODIN_SCHEMA_META_NOTES', '_elodin_schema_notes' );
@@ -354,7 +354,6 @@ function elodin_schema_render_preview_meta_box( $post ) {
 			value="<?php echo esc_attr( home_url( '/' ) ); ?>"
 		/>
 		<button type="button" class="button" id="elodin_schema_run_preview">Run Preview</button>
-		<input type="hidden" id="elodin_schema_preview_nonce" value="<?php echo esc_attr( wp_create_nonce( 'elodin_schema_preview' ) ); ?>" />
 	</div>
 	<div class="elodin-schema-preview-output-wrap">
 		<textarea class="widefat code elodin-schema-preview-output" rows="30" readonly id="elodin_schema_preview_output"><?php echo esc_textarea( $preview_result['markup'] ); ?></textarea>
@@ -948,7 +947,7 @@ function elodin_schema_output_schema() {
 	$queried_object_id    = get_queried_object_id();
 	$queried_object       = $queried_object_id ? get_post( $queried_object_id ) : null;
 
-	if ( $queried_object instanceof WP_Post && ELODIN_SCHEMA_POST_TYPE !== $queried_object->post_type ) {
+	if ( is_singular() && $queried_object instanceof WP_Post && ELODIN_SCHEMA_POST_TYPE !== $queried_object->post_type ) {
 		$local_context = elodin_schema_get_render_context( null, $queried_object );
 		$local_context = apply_filters( 'elodin_schema_local_context', $local_context, $queried_object );
 		$local_entries = elodin_schema_get_local_entries_for_output( $queried_object->ID, $local_context );
@@ -978,34 +977,32 @@ function elodin_schema_output_schema() {
 		)
 	);
 
-	if ( empty( $schema_posts ) ) {
-		return;
-	}
+	if ( ! empty( $schema_posts ) ) {
+		$schema_posts = apply_filters( 'elodin_schema_posts', $schema_posts );
 
-	$schema_posts = apply_filters( 'elodin_schema_posts', $schema_posts );
+		foreach ( $schema_posts as $schema_post ) {
+			if ( in_array( (int) $schema_post->ID, $replaced_global_ids, true ) ) {
+				continue;
+			}
 
-	foreach ( $schema_posts as $schema_post ) {
-		if ( in_array( (int) $schema_post->ID, $replaced_global_ids, true ) ) {
-			continue;
+			$context = elodin_schema_get_render_context( $schema_post );
+			$context = apply_filters( 'elodin_schema_context', $context, $schema_post );
+
+			if ( ! elodin_schema_should_output( $schema_post->ID, $context ) ) {
+				continue;
+			}
+
+			$markup = elodin_schema_get_rendered_markup( $schema_post, $context );
+			if ( empty( $markup ) ) {
+				continue;
+			}
+
+			printf(
+				"\n<!-- Elodin Schema: %s -->\n%s\n",
+				esc_html( get_the_title( $schema_post ) ),
+				$markup
+			);
 		}
-
-		$context = elodin_schema_get_render_context( $schema_post );
-		$context = apply_filters( 'elodin_schema_context', $context, $schema_post );
-
-		if ( ! elodin_schema_should_output( $schema_post->ID, $context ) ) {
-			continue;
-		}
-
-		$markup = elodin_schema_get_rendered_markup( $schema_post, $context );
-		if ( empty( $markup ) ) {
-			continue;
-		}
-
-		printf(
-			"\n<!-- Elodin Schema: %s -->\n%s\n",
-			esc_html( get_the_title( $schema_post ) ),
-			$markup
-		);
 	}
 
 	foreach ( $local_entries as $index => $local_entry ) {
@@ -1264,11 +1261,6 @@ function elodin_schema_resolve_placeholder( $token, $context ) {
 	}
 
 	return apply_filters( 'elodin_schema_resolved_value', $value, $token, $context );
-}
-
-function elodin_schema_get_preview_markup( $post ) {
-	$preview_result = elodin_schema_get_preview_result( $post );
-	return $preview_result['markup'];
 }
 
 function elodin_schema_get_preview_result( $post, $preview_url = '', $script_override = null ) {

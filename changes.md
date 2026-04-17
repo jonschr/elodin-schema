@@ -1,5 +1,26 @@
 # Elodin Schema Changes
 
+## 0.3
+
+### Added
+
+- Added repeatable post-level schema blocks to supported content editors.
+- Added per-post controls for enabled state, schema type, and explicit global-schema replacement.
+- Added starter template insertion and placeholder insertion to post-level schema blocks.
+- Added post-level front-end rendering so local schema can output on singular content without requiring a global schema entry.
+
+### Changed
+
+- Changed post-level schema output to run only on singular views.
+- Changed the post-level JSON-LD editor workflow to keep CodeMirror-backed textareas synchronized during editing and save.
+- Changed the post-level editor styling to better indicate the JSON-LD paste area and give the visible CodeMirror surface a clearer minimum height.
+
+### Fixed
+
+- Fixed a bug that prevented post-level schema from outputting when no global schema posts existed.
+- Fixed post-level schema rendering so local overrides do not apply on non-singular templates.
+- Fixed unused preview metabox markup and removed an unused preview helper function.
+
 ## 0.2
 
 ### Added
