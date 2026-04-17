@@ -297,6 +297,105 @@
 	opacity: 0.6;
 }
 
+.elodin-schema-post-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.elodin-schema-post-editor-actions {
+	margin: 0;
+}
+
+.elodin-schema-local-entry-list {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.elodin-schema-local-entry {
+	padding: 16px;
+	border: 1px solid #dcdcde;
+	border-radius: 6px;
+	background: #fff;
+}
+
+.elodin-schema-local-entry-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.elodin-schema-local-entry-title {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.elodin-schema-local-entry-settings {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin-bottom: 14px;
+}
+
+.elodin-schema-local-entry-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+	gap: 16px;
+	align-items: start;
+}
+
+.elodin-schema-local-entry-grid-item,
+.elodin-schema-local-entry-field {
+	min-width: 0;
+}
+
+.elodin-schema-local-entry-field .description,
+.elodin-schema-local-entry-grid-item .description {
+	margin-top: 8px;
+}
+
+.elodin-schema-local-entry-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: center;
+	margin-bottom: 12px;
+}
+
+.elodin-schema-local-entry-toolbar-group {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+
+.elodin-schema-local-entry-editor {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid #8c8f94;
+	border-radius: 4px;
+	background: #fff;
+	overflow: hidden;
+}
+
+.elodin-schema-local-entry .CodeMirror,
+.elodin-schema-local-entry textarea.code {
+	min-height: 220px;
+}
+
+.elodin-schema-local-entry .CodeMirror {
+	height: auto;
+	min-height: 220px;
+}
+
+.elodin-schema-local-entry .CodeMirror-scroll {
+	min-height: 220px;
+}
+
 @media (max-width: 1200px) {
 	#elodin-schema-editor-section .elodin-schema-workspace {
 		display: block;
@@ -315,6 +414,10 @@
 	}
 
 	#elodin-schema-settings-panel .elodin-schema-settings-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.elodin-schema-local-entry-grid {
 		grid-template-columns: 1fr;
 	}
 }

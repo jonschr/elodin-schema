@@ -33,12 +33,15 @@ define( 'ELODIN_SCHEMA_META_TARGET', '_elodin_schema_target' );
 define( 'ELODIN_SCHEMA_META_ENABLED', '_elodin_schema_enabled' );
 define( 'ELODIN_SCHEMA_META_TYPE', '_elodin_schema_type' );
 define( 'ELODIN_SCHEMA_META_VALIDATION_ERROR', '_elodin_schema_validation_error' );
+define( 'ELODIN_SCHEMA_META_LOCAL_ENTRIES', '_elodin_schema_local_entries' );
 
 add_action( 'init', 'elodin_schema_register_post_type' );
 add_action( 'add_meta_boxes', 'elodin_schema_register_meta_boxes' );
+add_action( 'add_meta_boxes', 'elodin_schema_register_post_meta_box' );
 add_action( 'admin_enqueue_scripts', 'elodin_schema_enqueue_admin_assets' );
 add_action( 'edit_form_after_title', 'elodin_schema_render_editor_section' );
 add_action( 'save_post_' . ELODIN_SCHEMA_POST_TYPE, 'elodin_schema_save_post' );
+add_action( 'save_post', 'elodin_schema_save_local_entries', 10, 2 );
 add_action( 'wp_head', 'elodin_schema_output_schema', 20 );
 add_action( 'admin_notices', 'elodin_schema_render_admin_notice' );
 add_action( 'wp_ajax_elodin_schema_preview', 'elodin_schema_ajax_preview' );
@@ -141,14 +144,60 @@ function elodin_schema_register_meta_boxes() {
 	);
 }
 
+function elodin_schema_get_supported_post_types() {
+	$post_types = get_post_types(
+		array(
+			'public'  => true,
+			'show_ui' => true,
+		),
+		'names'
+	);
+
+	unset( $post_types['attachment'] );
+	unset( $post_types[ ELODIN_SCHEMA_POST_TYPE ] );
+
+	$post_types = array_values( $post_types );
+
+	return apply_filters( 'elodin_schema_local_post_types', $post_types );
+}
+
+function elodin_schema_is_supported_post_type( $post_type ) {
+	return in_array( $post_type, elodin_schema_get_supported_post_types(), true );
+}
+
+function elodin_schema_register_post_meta_box() {
+	foreach ( elodin_schema_get_supported_post_types() as $post_type ) {
+		add_meta_box(
+			'elodin-schema-post',
+			__( 'Schema', 'elodin-schema' ),
+			'elodin_schema_render_post_meta_box',
+			$post_type,
+			'normal',
+			'default'
+		);
+	}
+}
+
 function elodin_schema_enqueue_admin_assets() {
 	$screen = get_current_screen();
 
-	if ( ! $screen || ELODIN_SCHEMA_POST_TYPE !== $screen->post_type ) {
+	if ( ! $screen ) {
+		return;
+	}
+
+	$is_schema_post_type    = ELODIN_SCHEMA_POST_TYPE === $screen->post_type;
+	$is_supported_post_type = elodin_schema_is_supported_post_type( $screen->post_type );
+
+	if ( ! $is_schema_post_type && ! $is_supported_post_type ) {
 		return;
 	}
 
 	$is_single_editor_screen = in_array( $screen->base, array( 'post', 'post-new' ), true );
+
+	if ( ! $is_schema_post_type && ! $is_single_editor_screen ) {
+		return;
+	}
+
 	$style_dependencies      = array();
 	$script_dependencies     = array( 'jquery' );
 	$settings                = false;
@@ -169,7 +218,7 @@ function elodin_schema_enqueue_admin_assets() {
 			)
 		);
 
-		if ( false !== $settings ) {
+		if ( $is_schema_post_type && false !== $settings ) {
 			$preview_settings = $settings;
 			if ( ! isset( $preview_settings['codemirror'] ) || ! is_array( $preview_settings['codemirror'] ) ) {
 				$preview_settings['codemirror'] = array();
@@ -389,6 +438,222 @@ function elodin_schema_render_settings_meta_box( $post ) {
 	<?php
 }
 
+function elodin_schema_get_empty_local_entry() {
+	return array(
+		'enabled'           => '1',
+		'schema_type'       => '',
+		'replace_global_id' => 0,
+		'script'            => '',
+		'validation_error'  => '',
+	);
+}
+
+function elodin_schema_get_post_schema_entries( $post_id ) {
+	$entries = get_post_meta( $post_id, ELODIN_SCHEMA_META_LOCAL_ENTRIES, true );
+
+	if ( ! is_array( $entries ) ) {
+		return array();
+	}
+
+	$normalized_entries = array();
+
+	foreach ( $entries as $entry ) {
+		if ( ! is_array( $entry ) ) {
+			continue;
+		}
+
+		$normalized_entries[] = array(
+			'enabled'           => ( isset( $entry['enabled'] ) && '0' === (string) $entry['enabled'] ) ? '0' : '1',
+			'schema_type'       => isset( $entry['schema_type'] ) ? (string) $entry['schema_type'] : '',
+			'replace_global_id' => isset( $entry['replace_global_id'] ) ? absint( $entry['replace_global_id'] ) : 0,
+			'script'            => isset( $entry['script'] ) ? (string) $entry['script'] : '',
+			'validation_error'  => isset( $entry['validation_error'] ) ? (string) $entry['validation_error'] : '',
+		);
+	}
+
+	return $normalized_entries;
+}
+
+function elodin_schema_get_global_schema_options() {
+	$schema_posts = get_posts(
+		array(
+			'post_type'              => ELODIN_SCHEMA_POST_TYPE,
+			'post_status'            => 'publish',
+			'posts_per_page'         => -1,
+			'orderby'                => 'title',
+			'order'                  => 'ASC',
+			'no_found_rows'          => true,
+			'update_post_meta_cache' => true,
+			'update_post_term_cache' => false,
+		)
+	);
+
+	$options = array();
+
+	foreach ( $schema_posts as $schema_post ) {
+		$schema_type = get_post_meta( $schema_post->ID, ELODIN_SCHEMA_META_TYPE, true );
+		$label       = get_the_title( $schema_post );
+
+		if ( $schema_type ) {
+			$label .= sprintf( ' (%s)', $schema_type );
+		}
+
+		$options[] = array(
+			'id'    => $schema_post->ID,
+			'label' => $label,
+		);
+	}
+
+	return $options;
+}
+
+function elodin_schema_render_post_meta_box( $post ) {
+	$entries               = elodin_schema_get_post_schema_entries( $post->ID );
+	$global_schema_options = elodin_schema_get_global_schema_options();
+
+	if ( empty( $entries ) ) {
+		$entries = array( elodin_schema_get_empty_local_entry() );
+	}
+
+	wp_nonce_field( 'elodin_schema_local_save', 'elodin_schema_local_nonce' );
+	?>
+	<div id="elodin-schema-local-editor" class="elodin-schema-post-editor" data-next-index="<?php echo esc_attr( count( $entries ) ); ?>">
+		<p class="description">Add one or more schema blocks for this post. Enabled local blocks output on this post only, and they can explicitly replace a selected global schema entry.</p>
+
+		<div class="elodin-schema-local-entry-list">
+			<?php foreach ( $entries as $index => $entry ) : ?>
+				<?php elodin_schema_render_post_schema_entry( $index, $entry, $global_schema_options ); ?>
+			<?php endforeach; ?>
+		</div>
+
+		<p class="elodin-schema-post-editor-actions">
+			<button type="button" class="button button-secondary" id="elodin-schema-add-local-entry">Add Schema Block</button>
+		</p>
+	</div>
+
+	<script type="text/html" id="tmpl-elodin-schema-local-entry">
+		<?php elodin_schema_render_post_schema_entry( '__INDEX__', elodin_schema_get_empty_local_entry(), $global_schema_options ); ?>
+	</script>
+	<?php
+}
+
+function elodin_schema_render_post_schema_entry( $index, $entry, $global_schema_options ) {
+	$entry             = wp_parse_args( $entry, elodin_schema_get_empty_local_entry() );
+	$field_prefix      = 'elodin_schema_local_entries[' . $index . ']';
+	$field_id_prefix   = 'elodin_schema_local_entries_' . $index;
+	$placeholders      = elodin_schema_get_placeholder_definitions();
+	$starter_templates = elodin_schema_get_starter_templates();
+	?>
+	<div class="elodin-schema-local-entry">
+		<div class="elodin-schema-local-entry-header">
+			<h3 class="elodin-schema-local-entry-title">Schema Block</h3>
+			<button type="button" class="button-link-delete elodin-schema-remove-local-entry">Remove</button>
+		</div>
+
+		<?php if ( ! empty( $entry['validation_error'] ) ) : ?>
+			<div class="notice notice-error inline">
+				<p><strong>JSON-LD validation error:</strong> <?php echo esc_html( $entry['validation_error'] ); ?></p>
+				<p>This block stays editable, but it will not output until the JSON-LD is valid again.</p>
+			</div>
+		<?php endif; ?>
+
+		<div class="elodin-schema-local-entry-settings">
+			<div class="elodin-schema-local-entry-grid">
+				<div class="elodin-schema-local-entry-grid-item">
+					<label class="elodin-schema-toggle" for="<?php echo esc_attr( $field_id_prefix . '_enabled' ); ?>">
+						<input
+							type="checkbox"
+							name="<?php echo esc_attr( $field_prefix . '[enabled]' ); ?>"
+							id="<?php echo esc_attr( $field_id_prefix . '_enabled' ); ?>"
+							value="1"
+							<?php checked( $entry['enabled'], '1' ); ?>
+						/>
+						<span class="elodin-schema-toggle-track" aria-hidden="true">
+							<span class="elodin-schema-toggle-thumb"></span>
+						</span>
+						<span class="elodin-schema-toggle-text">Enabled</span>
+					</label>
+					<p class="description">Only enabled, valid blocks output on this post.</p>
+				</div>
+
+				<div class="elodin-schema-local-entry-grid-item">
+					<label for="<?php echo esc_attr( $field_id_prefix . '_schema_type' ); ?>" class="elodin-schema-setting-label">Schema Type</label>
+					<input
+						type="text"
+						name="<?php echo esc_attr( $field_prefix . '[schema_type]' ); ?>"
+						id="<?php echo esc_attr( $field_id_prefix . '_schema_type' ); ?>"
+						class="widefat"
+						value="<?php echo esc_attr( $entry['schema_type'] ); ?>"
+						placeholder="VacationRental"
+					/>
+					<p class="description">Internal label for this local schema block.</p>
+				</div>
+			</div>
+
+			<div class="elodin-schema-local-entry-field">
+				<label for="<?php echo esc_attr( $field_id_prefix . '_replace_global_id' ); ?>" class="elodin-schema-setting-label">Replace Global Schema</label>
+				<select
+					name="<?php echo esc_attr( $field_prefix . '[replace_global_id]' ); ?>"
+					id="<?php echo esc_attr( $field_id_prefix . '_replace_global_id' ); ?>"
+					class="widefat"
+				>
+					<option value="0">Do not replace a global schema</option>
+					<?php foreach ( $global_schema_options as $global_schema_option ) : ?>
+						<option value="<?php echo esc_attr( $global_schema_option['id'] ); ?>" <?php selected( $entry['replace_global_id'], $global_schema_option['id'] ); ?>>
+							<?php echo esc_html( $global_schema_option['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+				<p class="description">When this local block is enabled and valid, the selected global schema is skipped on this post.</p>
+			</div>
+		</div>
+
+		<div class="elodin-schema-local-entry-toolbar">
+			<div class="elodin-schema-local-entry-toolbar-group">
+				<label for="<?php echo esc_attr( $field_id_prefix . '_template' ); ?>" class="screen-reader-text">Starter Template</label>
+				<select id="<?php echo esc_attr( $field_id_prefix . '_template' ); ?>" class="regular-text elodin-schema-local-template">
+					<option value="">Select a starter template</option>
+					<?php foreach ( $starter_templates as $template ) : ?>
+						<option value="<?php echo esc_attr( $template['json'] ); ?>">
+							<?php echo esc_html( $template['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+				<button type="button" class="button elodin-schema-local-apply-template">Insert Template</button>
+			</div>
+
+			<div class="elodin-schema-local-entry-toolbar-group">
+				<label for="<?php echo esc_attr( $field_id_prefix . '_placeholder_picker' ); ?>" class="screen-reader-text">Placeholder Picker</label>
+				<select id="<?php echo esc_attr( $field_id_prefix . '_placeholder_picker' ); ?>" class="regular-text elodin-schema-local-placeholder-picker">
+					<option value="">Choose a placeholder to insert</option>
+					<?php foreach ( $placeholders as $group_label => $group_placeholders ) : ?>
+						<optgroup label="<?php echo esc_attr( $group_label ); ?>">
+							<?php foreach ( $group_placeholders as $placeholder => $description ) : ?>
+								<option value="<?php echo esc_attr( $placeholder ); ?>">
+									<?php echo esc_html( $placeholder . ' — ' . $description ); ?>
+								</option>
+							<?php endforeach; ?>
+						</optgroup>
+					<?php endforeach; ?>
+				</select>
+			</div>
+		</div>
+
+		<div class="elodin-schema-local-entry-editor">
+			<textarea
+				name="<?php echo esc_attr( $field_prefix . '[script]' ); ?>"
+				id="<?php echo esc_attr( $field_id_prefix . '_script' ); ?>"
+				class="widefat code elodin-schema-json-editor"
+				rows="20"
+				spellcheck="false"
+				wrap="off"
+			><?php echo esc_textarea( $entry['script'] ); ?></textarea>
+		</div>
+		<p class="description">Paste JSON-LD only. The plugin wraps valid JSON-LD in <code>&lt;script type="application/ld+json"&gt;</code> during output.</p>
+	</div>
+	<?php
+}
+
 function elodin_schema_save_post( $post_id ) {
 	if ( ! isset( $_POST['elodin_schema_nonce'] ) ) {
 		return;
@@ -452,10 +717,86 @@ function elodin_schema_save_post( $post_id ) {
 	}
 }
 
+function elodin_schema_save_local_entries( $post_id, $post ) {
+	if ( ! $post instanceof WP_Post || ! elodin_schema_is_supported_post_type( $post->post_type ) ) {
+		return;
+	}
+
+	if ( wp_is_post_revision( $post_id ) ) {
+		return;
+	}
+
+	if ( ! isset( $_POST['elodin_schema_local_nonce'] ) ) {
+		return;
+	}
+
+	if ( ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['elodin_schema_local_nonce'] ) ), 'elodin_schema_local_save' ) ) {
+		return;
+	}
+
+	if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+		return;
+	}
+
+	if ( ! current_user_can( 'edit_post', $post_id ) ) {
+		return;
+	}
+
+	$entries = array();
+
+	if ( isset( $_POST['elodin_schema_local_entries'] ) && is_array( $_POST['elodin_schema_local_entries'] ) ) {
+		$entries = wp_unslash( $_POST['elodin_schema_local_entries'] );
+	}
+
+	$normalized_entries = array();
+
+	foreach ( $entries as $entry ) {
+		if ( ! is_array( $entry ) ) {
+			continue;
+		}
+
+		$schema_type       = isset( $entry['schema_type'] ) ? sanitize_text_field( $entry['schema_type'] ) : '';
+		$replace_global_id = isset( $entry['replace_global_id'] ) ? absint( $entry['replace_global_id'] ) : 0;
+		$enabled           = isset( $entry['enabled'] ) ? '1' : '0';
+		$script            = isset( $entry['script'] ) ? elodin_schema_normalize_json_ld( $entry['script'] ) : '';
+
+		if ( '' === $schema_type && 0 === $replace_global_id && '' === $script ) {
+			continue;
+		}
+
+		$normalized_entry = array(
+			'enabled'           => $enabled,
+			'schema_type'       => $schema_type,
+			'replace_global_id' => $replace_global_id,
+			'script'            => $script,
+			'validation_error'  => '',
+		);
+
+		if ( '' !== $script ) {
+			$validation = elodin_schema_validate_json_ld( $script );
+
+			$normalized_entry['script'] = $validation['normalized'];
+
+			if ( ! $validation['valid'] ) {
+				$normalized_entry['validation_error'] = $validation['error'];
+			}
+		}
+
+		$normalized_entries[] = $normalized_entry;
+	}
+
+	if ( empty( $normalized_entries ) ) {
+		delete_post_meta( $post_id, ELODIN_SCHEMA_META_LOCAL_ENTRIES );
+		return;
+	}
+
+	update_post_meta( $post_id, ELODIN_SCHEMA_META_LOCAL_ENTRIES, $normalized_entries );
+}
+
 function elodin_schema_render_admin_notice() {
 	$screen = get_current_screen();
 
-	if ( ! $screen || ELODIN_SCHEMA_POST_TYPE !== $screen->post_type ) {
+	if ( ! $screen ) {
 		return;
 	}
 
@@ -465,6 +806,30 @@ function elodin_schema_render_admin_notice() {
 	}
 
 	if ( $post_id < 1 ) {
+		return;
+	}
+
+	if ( ELODIN_SCHEMA_POST_TYPE !== $screen->post_type && ! elodin_schema_is_supported_post_type( $screen->post_type ) ) {
+		return;
+	}
+
+	if ( ELODIN_SCHEMA_POST_TYPE !== $screen->post_type ) {
+		$entries = elodin_schema_get_post_schema_entries( $post_id );
+		$invalid = array_filter(
+			$entries,
+			static function( $entry ) {
+				return ! empty( $entry['validation_error'] );
+			}
+		);
+
+		if ( empty( $invalid ) ) {
+			return;
+		}
+		?>
+		<div class="notice notice-warning">
+			<p><strong>Elodin Schema:</strong> one or more post-level schema blocks are invalid and are currently prevented from outputting.</p>
+		</div>
+		<?php
 		return;
 	}
 
@@ -578,6 +943,25 @@ function elodin_schema_output_schema() {
 		return;
 	}
 
+	$local_entries        = array();
+	$replaced_global_ids  = array();
+	$queried_object_id    = get_queried_object_id();
+	$queried_object       = $queried_object_id ? get_post( $queried_object_id ) : null;
+
+	if ( $queried_object instanceof WP_Post && ELODIN_SCHEMA_POST_TYPE !== $queried_object->post_type ) {
+		$local_context = elodin_schema_get_render_context( null, $queried_object );
+		$local_context = apply_filters( 'elodin_schema_local_context', $local_context, $queried_object );
+		$local_entries = elodin_schema_get_local_entries_for_output( $queried_object->ID, $local_context );
+
+		foreach ( $local_entries as $local_entry ) {
+			if ( ! empty( $local_entry['replace_global_id'] ) ) {
+				$replaced_global_ids[] = (int) $local_entry['replace_global_id'];
+			}
+		}
+
+		$replaced_global_ids = array_values( array_unique( $replaced_global_ids ) );
+	}
+
 	$schema_posts = get_posts(
 		apply_filters(
 			'elodin_schema_query_args',
@@ -601,6 +985,10 @@ function elodin_schema_output_schema() {
 	$schema_posts = apply_filters( 'elodin_schema_posts', $schema_posts );
 
 	foreach ( $schema_posts as $schema_post ) {
+		if ( in_array( (int) $schema_post->ID, $replaced_global_ids, true ) ) {
+			continue;
+		}
+
 		$context = elodin_schema_get_render_context( $schema_post );
 		$context = apply_filters( 'elodin_schema_context', $context, $schema_post );
 
@@ -617,6 +1005,16 @@ function elodin_schema_output_schema() {
 			"\n<!-- Elodin Schema: %s -->\n%s\n",
 			esc_html( get_the_title( $schema_post ) ),
 			$markup
+		);
+	}
+
+	foreach ( $local_entries as $index => $local_entry ) {
+		$label = ! empty( $local_entry['schema_type'] ) ? $local_entry['schema_type'] : sprintf( 'Post schema %d', $index + 1 );
+
+		printf(
+			"\n<!-- Elodin Schema: %s -->\n%s\n",
+			esc_html( $label ),
+			$local_entry['markup']
 		);
 	}
 }
@@ -645,6 +1043,35 @@ function elodin_schema_should_output( $post_id, $context = array() ) {
 
 function elodin_schema_get_rendered_markup( $schema_post, $context = array() ) {
 	$script = get_post_meta( $schema_post->ID, ELODIN_SCHEMA_META_SCRIPT, true );
+	return elodin_schema_get_markup_from_script( $script, $context, $schema_post );
+}
+
+function elodin_schema_get_local_entries_for_output( $post_id, $context = array() ) {
+	$entries = elodin_schema_get_post_schema_entries( $post_id );
+	$entries = apply_filters( 'elodin_schema_local_entries', $entries, $post_id, $context );
+
+	$output_entries = array();
+
+	foreach ( $entries as $entry ) {
+		$is_enabled = ! isset( $entry['enabled'] ) || '1' === (string) $entry['enabled'];
+
+		if ( ! $is_enabled || empty( $entry['script'] ) || ! empty( $entry['validation_error'] ) ) {
+			continue;
+		}
+
+		$markup = elodin_schema_get_markup_from_script( $entry['script'], $context, null, $entry );
+		if ( empty( $markup ) ) {
+			continue;
+		}
+
+		$entry['markup'] = $markup;
+		$output_entries[] = $entry;
+	}
+
+	return $output_entries;
+}
+
+function elodin_schema_get_markup_from_script( $script, $context = array(), $schema_post = null, $local_entry = null ) {
 	if ( empty( $script ) ) {
 		return '';
 	}
@@ -655,7 +1082,12 @@ function elodin_schema_get_rendered_markup( $schema_post, $context = array() ) {
 	}
 
 	$resolved = elodin_schema_replace_placeholders_recursive( $validation['data'], $context );
-	$resolved = apply_filters( 'elodin_schema_resolved_data', $resolved, $schema_post, $context );
+
+	if ( $schema_post instanceof WP_Post ) {
+		$resolved = apply_filters( 'elodin_schema_resolved_data', $resolved, $schema_post, $context );
+	} else {
+		$resolved = apply_filters( 'elodin_schema_local_resolved_data', $resolved, $local_entry, $context );
+	}
 
 	$json = wp_json_encode(
 		$resolved,
@@ -673,17 +1105,29 @@ function elodin_schema_get_rendered_markup( $schema_post, $context = array() ) {
 		$json
 	);
 
-	return apply_filters( 'elodin_schema_markup', $markup, $schema_post, $context, $resolved );
+	if ( $schema_post instanceof WP_Post ) {
+		return apply_filters( 'elodin_schema_markup', $markup, $schema_post, $context, $resolved );
+	}
+
+	return apply_filters( 'elodin_schema_local_markup', $markup, $local_entry, $context, $resolved );
 }
 
-function elodin_schema_get_render_context( $schema_post ) {
-	$object_id = get_queried_object_id();
-	$object    = $object_id ? get_post( $object_id ) : null;
+function elodin_schema_get_render_context( $schema_post, $object = null, $request_url = '' ) {
+	if ( null === $object ) {
+		$object_id = get_queried_object_id();
+		$object    = $object_id ? get_post( $object_id ) : null;
+	} else {
+		$object_id = $object instanceof WP_Post ? $object->ID : 0;
+	}
+
+	if ( '' === $request_url ) {
+		$request_url = elodin_schema_get_current_url();
+	}
 
 	$context = array(
 		'schema_post' => $schema_post,
 		'request'     => array(
-			'url' => elodin_schema_get_current_url(),
+			'url' => $request_url,
 		),
 		'site'        => array(
 			'name'        => get_bloginfo( 'name' ),
